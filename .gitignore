@@ -1,0 +1,5 @@
+cap2-autmatas-finitos.pdf
+tmp/
+node_modules/
+.openai/
+dist/

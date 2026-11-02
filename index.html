@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Laboratorio interactivo para aplicar las dos partes del teorema de Kleene.">
+  <title>KleeneLab — Expresiones regulares y autómatas</title>
+  <link rel="stylesheet" href="styles.css?v=6">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand-mark" aria-hidden="true">K</div>
+    <div class="brand-copy">
+      <strong>KleeneLab</strong>
+      <span>Del lenguaje al autómata y de vuelta</span>
+    </div>
+    <nav class="direction-switch" aria-label="Dirección del teorema">
+      <button class="direction active" data-view="part1"><span>01</span> ER → AFN-λ</button>
+      <button class="direction" data-view="part2"><span>02</span> AFN → ER</button>
+    </nav>
+    <button class="icon-btn" id="helpButton" title="Abrir ayuda" aria-label="Abrir ayuda">?</button>
+  </header>
+
+  <main class="workspace">
+    <aside class="control-panel">
+      <section id="part1Panel" class="view-panel active">
+        <p class="eyebrow">Parte I · Construcción del teorema</p>
+        <h1>Expresión regular a AFN-λ</h1>
+        <p class="lede">Escribe una expresión. El laboratorio construye un autómata equivalente y explica la composición.</p>
+
+        <label for="regexInput">Expresión regular</label>
+        <div class="input-wrap">
+          <input id="regexInput" value="(a|b)*abb" autocomplete="off" spellcheck="false">
+          <button id="insertUnion" class="inline-key" title="Insertar unión">∪</button>
+        </div>
+        <div class="syntax-row" aria-label="Símbolos admitidos">
+          <span>∪ o | <small>unión</small></span><span>· <small>concatenación</small></span>
+          <span>* <small>estrella</small></span><span>λ <small>vacía</small></span><span>∅ <small>vacío</small></span>
+        </div>
+        <button class="primary-btn" id="buildRegex"><span>Construir autómata</span><b>→</b></button>
+        <div class="examples">
+          <span>Ejemplos</span>
+          <button data-regex="(a|b)*abb">(a ∪ b)*abb</button>
+          <button data-regex="a*(b|ab*|ab*a)c*|(a|b)(a|ac)*">Ejercicio 1</button>
+          <button data-regex="c*a(a|ba)*(abc)*|c*(a|cb*c)">Ejercicio 2</button>
+        </div>
+        <div id="regexStatus" class="status-card info">
+          <strong>Listo para construir</strong>
+          <p>La concatenación puede escribirse de forma implícita: <code>ab</code>.</p>
+        </div>
+      </section>
+
+      <section id="part2Panel" class="view-panel">
+        <p class="eyebrow">Parte II · Lema de Arden</p>
+        <h1>AFN a expresión regular</h1>
+        <p class="lede">Dibuja o importa el autómata. Cada estado genera una ecuación de lenguajes que se resuelve por sustitución.</p>
+        <div class="checklist">
+          <div><span id="checkStates">○</span><p><b>Estados</b><small>Agrega al menos uno.</small></p></div>
+          <div><span id="checkInitial">○</span><p><b>Estado inicial</b><small>Debe existir exactamente uno.</small></p></div>
+          <div><span id="checkFinal">○</span><p><b>Aceptación</b><small>Marca uno o más estados finales.</small></p></div>
+        </div>
+        <button class="primary-btn" id="solveAutomaton"><span>Obtener expresión regular</span><b>→</b></button>
+        <button class="secondary-btn" id="loadClassExample">Cargar ejemplo de clase</button>
+        <div id="ardenStatus" class="status-card info">
+          <strong>Construye el autómata</strong>
+          <p>Las transiciones λ se eliminan automáticamente antes de aplicar Arden.</p>
+        </div>
+      </section>
+    </aside>
+
+    <section class="canvas-column">
+      <div class="canvas-toolbar" role="toolbar" aria-label="Herramientas del lienzo">
+        <button class="tool active" data-tool="select" title="Seleccionar y mover (V)"><span>↖</span> Mover</button>
+        <button class="tool" data-tool="state" title="Agregar estado (E)"><span>○</span> Estado</button>
+        <button class="tool" data-tool="transition" title="Crear transición (T)"><span>↗</span> Transición</button>
+        <div class="toolbar-divider"></div>
+        <button id="setInitial" title="Marcar el estado seleccionado como inicial">Inicial</button>
+        <button id="toggleFinal" title="Alternar estado de aceptación">Final</button>
+        <button id="deleteSelection" title="Eliminar selección (Supr)">Eliminar</button>
+        <div class="toolbar-spacer"></div>
+        <button id="undoButton" title="Deshacer (Ctrl+Z)">↶</button>
+        <button id="redoButton" title="Rehacer (Ctrl+Y)">↷</button>
+        <button id="autoLayout" title="Ordenar automáticamente">Ordenar</button>
+        <button id="moreButton" aria-haspopup="true" aria-expanded="false">•••</button>
+        <div id="moreMenu" class="more-menu" hidden>
+          <button id="newAutomaton">Nuevo autómata</button>
+          <button id="exportSvg">Exportar diagrama SVG</button>
+          <button id="exportJson">Guardar proyecto JSON</button>
+          <button id="importJson">Abrir proyecto JSON</button>
+          <input id="importFile" type="file" accept="application/json,.json" hidden>
+        </div>
+      </div>
+
+      <div id="canvasWrap" class="canvas-wrap">
+        <svg id="automatonCanvas" viewBox="0 0 900 560" role="img" aria-label="Lienzo interactivo del autómata">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="context-stroke"></path>
+            </marker>
+            <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+              <feDropShadow dx="0" dy="3" stdDeviation="4" flood-opacity=".16"/>
+            </filter>
+          </defs>
+          <g id="edgesLayer"></g>
+          <g id="nodesLayer"></g>
+        </svg>
+        <div id="emptyHint" class="empty-hint">
+          <div>○</div><strong>El lienzo está vacío</strong>
+          <p>Elige <b>Estado</b> y haz clic aquí, o construye una expresión regular.</p>
+        </div>
+        <div class="canvas-tip" id="canvasTip">Arrastra los estados para reorganizar el diagrama</div>
+      </div>
+
+      <div class="simulator-bar">
+        <div>
+          <label for="wordInput">Probar cadena</label>
+          <input id="wordInput" placeholder="Ej. abba (vacío = λ)" spellcheck="false">
+        </div>
+        <button id="simulateButton">Simular</button>
+        <div id="simulationResult" class="simulation-result neutral">
+          <span>●</span><p><b>Sin ejecutar</b><small>Comprueba si una cadena es aceptada.</small></p>
+        </div>
+      </div>
+    </section>
+
+    <aside class="result-panel">
+      <div class="result-head">
+        <div><p class="eyebrow">Desarrollo</p><h2 id="resultTitle">Construcción paso a paso</h2></div>
+        <button id="copyResult" class="icon-btn" title="Copiar resultado">⧉</button>
+      </div>
+      <div id="selectionEditor" class="selection-editor" hidden>
+        <label for="stateName">Estado seleccionado</label>
+        <div><input id="stateName"><button id="renameState">Renombrar</button></div>
+      </div>
+      <div id="resultEmpty" class="result-empty">
+        <span>∑</span>
+        <h3>Aquí aparecerá la solución</h3>
+        <p>Construye una expresión o convierte el autómata para ver las ecuaciones y cada sustitución.</p>
+      </div>
+      <div id="resultContent" hidden>
+        <div class="result-expression">
+          <span id="resultLabel">Expresión normalizada</span>
+          <code id="finalResult"></code>
+        </div>
+        <div id="equationsBlock" class="equations-block" hidden>
+          <h3>Sistema inicial</h3>
+          <div id="equationsList"></div>
+        </div>
+        <h3 id="stepsHeading">Construcción</h3>
+        <ol id="stepsList" class="steps-list"></ol>
+      </div>
+    </aside>
+  </main>
+
+  <dialog id="transitionDialog">
+    <form method="dialog">
+      <div class="dialog-head"><div><p class="eyebrow">Nueva transición</p><h2 id="transitionTitle">q0 → q1</h2></div><button value="cancel" aria-label="Cerrar">×</button></div>
+      <label for="transitionSymbol">Símbolo</label>
+      <input id="transitionSymbol" value="a" maxlength="8" autocomplete="off">
+      <div class="symbol-buttons">
+        <button type="button" data-symbol="a">a</button><button type="button" data-symbol="b">b</button>
+        <button type="button" data-symbol="c">c</button><button type="button" data-symbol="λ">λ</button>
+      </div>
+      <p class="dialog-help">Para varios símbolos crea transiciones separadas. Usa λ para una transición vacía.</p>
+      <div class="dialog-actions"><button value="cancel" class="secondary-btn">Cancelar</button><button id="confirmTransition" value="default" class="primary-btn">Crear transición</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="helpDialog">
+    <form method="dialog">
+      <div class="dialog-head"><div><p class="eyebrow">Guía rápida</p><h2>Cómo usar KleeneLab</h2></div><button value="close" aria-label="Cerrar">×</button></div>
+      <div class="help-grid">
+        <section><b>Parte I</b><p>Escribe una expresión usando unión, concatenación, estrella, λ o ∅. Pulsa “Construir autómata”.</p></section>
+        <section><b>Editar</b><p>Agrega estados, crea transiciones haciendo clic en origen y destino, y arrastra para ordenar.</p></section>
+        <section><b>Parte II</b><p>Define inicial y finales, abre la pestaña AFN → ER y resuelve las ecuaciones de Arden.</p></section>
+        <section><b>Atajos</b><p>V: mover · E: estado · T: transición · Supr: eliminar · Ctrl+Z: deshacer.</p></section>
+      </div>
+      <button value="close" class="primary-btn">Entendido</button>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="app.js?v=6"></script>
+</body>
+</html>
