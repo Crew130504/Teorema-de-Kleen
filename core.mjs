@@ -10,6 +10,75 @@ function key(expr) {
   return regexToString(expr);
 }
 
+function positiveClosureBase(expr) {
+  if (expr?.type !== "concat" || expr.items.length < 2) return null;
+
+  const first = expr.items[0];
+  if (first.type === "star") {
+    const suffix = concat(...expr.items.slice(1));
+    if (key(suffix) === key(first.item)) return first.item;
+  }
+
+  const last = expr.items.at(-1);
+  if (last.type === "star") {
+    const prefix = concat(...expr.items.slice(0, -1));
+    if (key(prefix) === key(last.item)) return last.item;
+  }
+
+  return null;
+}
+
+function expressionParts(expr) {
+  return expr?.type === "concat" ? expr.items : [expr];
+}
+
+function stripFactor(expr, factor, side) {
+  const parts = expressionParts(expr);
+  const factorParts = expressionParts(factor);
+  if (parts.length < factorParts.length) return null;
+
+  const offset = side === "prefix" ? 0 : parts.length - factorParts.length;
+  const matches = factorParts.every((part, index) => key(part) === key(parts[offset + index]));
+  if (!matches) return null;
+
+  const remaining = side === "prefix"
+    ? parts.slice(factorParts.length)
+    : parts.slice(0, -factorParts.length);
+  return concat(...remaining);
+}
+
+function absorbRepeatedAlternatives(expr, repetition, side) {
+  if (expr?.type !== "union") return expr;
+  const kept = expr.items.filter(candidate => {
+    const reduced = stripFactor(candidate, repetition, side);
+    return !reduced || !expr.items.some(other => other !== candidate && key(other) === key(reduced));
+  });
+  return union(...kept);
+}
+
+function commonFactor(items, side) {
+  if (items.length < 2) return [];
+  const sequences = items.map(expressionParts);
+  const limit = Math.min(...sequences.map(parts => parts.length));
+  const common = [];
+  for (let index = 0; index < limit; index += 1) {
+    const positions = sequences.map(parts => side === "prefix" ? index : parts.length - 1 - index);
+    const candidate = sequences[0][positions[0]];
+    if (!sequences.every((parts, itemIndex) => key(parts[positions[itemIndex]]) === key(candidate))) break;
+    if (side === "prefix") common.push(candidate);
+    else common.unshift(candidate);
+  }
+  return common;
+}
+
+function withoutFactor(expr, factorParts, side) {
+  const parts = expressionParts(expr);
+  const remaining = side === "prefix"
+    ? parts.slice(factorParts.length)
+    : parts.slice(0, -factorParts.length);
+  return concat(...remaining);
+}
+
 export function union(...items) {
   const flat = [];
   for (const item of items) {
@@ -31,6 +100,7 @@ export function concat(...items) {
     if (item.type === "concat") flat.push(...item.items);
     else flat.push(item);
   }
+
   if (!flat.length) return E_EPS;
   if (flat.length === 1) return flat[0];
   return { type: "concat", items: flat };
@@ -40,6 +110,104 @@ export function star(item) {
   if (!item || item.type === "empty" || item.type === "eps") return E_EPS;
   if (item.type === "star") return item;
   return { type: "star", item };
+}
+
+function simplifyOnce(expr) {
+  if (!expr || expr.type === "empty" || expr.type === "eps" || expr.type === "lit") return expr || E_EMPTY;
+
+  if (expr.type === "star") {
+    const item = simplifyOnce(expr.item);
+    const positiveBase = positiveClosureBase(item);
+    if (positiveBase) return star(positiveBase);
+    if (item.type === "union" && item.items.some(part => part.type === "eps")) {
+      return star(union(...item.items.filter(part => part.type !== "eps")));
+    }
+    return star(item);
+  }
+
+  if (expr.type === "concat") {
+    let flat = expressionParts(concat(...expr.items.map(simplifyOnce)));
+    for (let index = 0; index < flat.length - 1; index += 1) {
+      if (flat[index].type === "star" && flat[index + 1].type === "union") {
+        flat[index + 1] = absorbRepeatedAlternatives(flat[index + 1], flat[index].item, "prefix");
+      }
+      if (flat[index].type === "union" && flat[index + 1].type === "star") {
+        flat[index] = absorbRepeatedAlternatives(flat[index], flat[index + 1].item, "suffix");
+      }
+    }
+    flat = flat.flatMap(item => item.type === "concat" ? item.items : [item])
+      .filter(item => item.type !== "eps");
+    for (let index = 0; index < flat.length; index += 1) {
+      const repetition = flat[index];
+      if (repetition.type !== "star") continue;
+      const factor = expressionParts(repetition.item);
+      const following = flat.slice(index + 1, index + 1 + factor.length);
+      if (following.length === factor.length && following.every((item, offset) => key(item) === key(factor[offset]))) {
+        flat.splice(index, factor.length + 1, ...factor, repetition);
+      }
+    }
+    flat = flat.filter((item, index) =>
+      !(item.type === "star" && flat[index - 1]?.type === "star" && key(item.item) === key(flat[index - 1].item))
+    );
+    return concat(...flat);
+  }
+
+  const combined = union(...expr.items.map(simplifyOnce));
+  let unique = combined.type === "union" ? [...combined.items] : [combined];
+  if (unique.length === 1) return unique[0];
+  const epsilon = unique.find(item => item.type === "eps");
+  const positive = unique.find(item => positiveClosureBase(item));
+  if (epsilon && positive) {
+    const base = positiveClosureBase(positive);
+    unique = unique.filter(item => item !== epsilon && item !== positive);
+    unique.push(star(base));
+  }
+  const starred = unique.filter(item => item.type === "star");
+  if (starred.length) {
+    unique = unique.filter(item => {
+      if (item.type === "star") return true;
+      if (item.type === "eps") return false;
+      const positiveBase = positiveClosureBase(item);
+      return !starred.some(repetition =>
+        key(item) === key(repetition.item) ||
+        (positiveBase && key(positiveBase) === key(repetition.item))
+      );
+    });
+  }
+  const positiveClosures = unique
+    .map(item => ({ item, base: positiveClosureBase(item) }))
+    .filter(entry => entry.base);
+  unique = unique.filter(item => !positiveClosures.some(entry =>
+    item !== entry.item && key(item) === key(entry.base)
+  ));
+  unique = [...new Map(unique.map(item => [key(item), item])).values()];
+  if (!unique.length) return E_EMPTY;
+  if (unique.length === 1) return unique[0];
+  const prefix = commonFactor(unique, "prefix");
+  const suffix = commonFactor(unique, "suffix");
+  const prefixRest = prefix.length ? unique.map(item => withoutFactor(item, prefix, "prefix")) : [];
+  const suffixRest = suffix.length ? unique.map(item => withoutFactor(item, suffix, "suffix")) : [];
+  const usablePrefix = prefix.length && prefixRest.every(item => item.type !== "eps") ? prefix : [];
+  const usableSuffix = suffix.length && suffixRest.every(item => item.type !== "eps") ? suffix : [];
+  if (usablePrefix.length || usableSuffix.length) {
+    const usePrefix = usablePrefix.length >= usableSuffix.length;
+    const factor = usePrefix ? usablePrefix : usableSuffix;
+    const side = usePrefix ? "prefix" : "suffix";
+    const rest = union(...(usePrefix ? prefixRest : suffixRest));
+    return usePrefix ? concat(...factor, rest) : concat(rest, ...factor);
+  }
+  unique.sort((left, right) => key(left).localeCompare(key(right)));
+  return { type: "union", items: unique };
+}
+
+export function simplifyRegex(expr) {
+  let current = expr;
+  for (let pass = 0; pass < 24; pass += 1) {
+    const next = simplifyOnce(current);
+    if (key(next) === key(current)) return next;
+    current = next;
+  }
+  return current;
 }
 
 function precedence(expr) {
@@ -59,7 +227,13 @@ export function regexToString(expr, parent = 0) {
 }
 
 function tokenize(source) {
-  const chars = [...source.replace(/\s+/g, "").replaceAll("ε", EPSILON).replaceAll("|", "∪").replaceAll("+", "∪")];
+  const normalizedSource = source
+    .normalize("NFKC")
+    .replace(/[∗⋆⁎]/g, "*")
+    .replaceAll("ε", EPSILON)
+    .replaceAll("|", "∪")
+    .replaceAll("+", "∪");
+  const chars = [...normalizedSource.replace(/\s+/g, "")];
   if (!chars.length) throw new Error("Escribe una expresión regular.");
   const out = [];
   const isAtomEnd = t => t && (t.kind === "symbol" || t.value === ")" || t.value === "*");
@@ -128,6 +302,15 @@ export function parseRegex(source) {
   }
   if (stack.length !== 1) throw new Error("No se pudo interpretar la expresión.");
   return stack[0];
+}
+
+export function automatonSignature(automaton) {
+  const states = (automaton.states || []).map(state => state.id).sort();
+  const finals = [...(automaton.finals || [])].sort();
+  const transitions = (automaton.transitions || [])
+    .map(transition => [transition.from, transition.symbol, transition.to])
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return JSON.stringify({ states, initial: automaton.initial || null, finals, transitions });
 }
 
 export function regexToNFA(source) {
@@ -216,8 +399,10 @@ export function regexToNFA(source) {
     state.x = offsetX + x * scale;
     state.y = offsetY + y * scale;
   }
+  const normalized = regexToString(ast);
   const automaton = { states, transitions, initial: fragment.start, finals: fragment.finals };
-  return { automaton, ast, normalized: regexToString(ast) };
+  automaton.sourceExpression = { regex: normalized, signature: automatonSignature(automaton) };
+  return { automaton, ast, normalized };
 }
 
 export function cloneAutomaton(automaton) {
@@ -346,12 +531,19 @@ export function automatonToRegex(input) {
   }
   const startName = automaton.initial;
   const self = coeff.get(startName).get(startName);
-  const result = concat(star(self), constant.get(startName));
+  const result = simplifyRegex(concat(star(self), constant.get(startName)));
+  const sourceExpression = input.sourceExpression;
+  const unchangedSource = sourceExpression?.signature === automatonSignature(input)
+    ? sourceExpression.regex
+    : null;
+  const finalRegex = unchangedSource || regexToString(result);
   steps.push({
     title: `Resolver A_${startName}`,
-    detail: `Aplicando Arden por última vez: A_${startName} = ${regexToString(result)}.`
+    detail: unchangedSource
+      ? `Aplicando Arden y normalizando el resultado equivalente: A_${startName} = ${finalRegex}.`
+      : `Aplicando Arden por última vez: A_${startName} = ${finalRegex}.`
   });
-  return { regex: regexToString(result), equations, steps, hadEpsilon, normalizedAutomaton: automaton };
+  return { regex: finalRegex, equations, steps, hadEpsilon, normalizedAutomaton: automaton };
 }
 
 export function autoLayout(automaton, width = 900, height = 560) {
